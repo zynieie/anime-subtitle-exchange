@@ -1,62 +1,60 @@
-# Anime-subtitle-exchange.SKILL — Technical Documentation
+# anime-subtitle-exchange
 
-> **Language policy.** English is the normative language of this document. Chinese text is retained only when it is a machine-matched subtitle tag, a proper name, a literal trigger alias, or a localized sample.
+## Overview
 
-## 1. Overview
+BD、REMUX 这类高质量片源经常不带外挂字幕，而 WebRip / WEB-DL 之类的流媒体压制通常有字幕组的内封或内嵌轨。这个 Skill 做的事就是：从流媒体片源里把字幕轨抠出来，贴到目标视频旁边，PotPlayer 通过同名规则自动加载。
 
-This Skill extracts a subtitle track from a streaming release and places it beside a target video using PotPlayer's same-name loading rule. The target video and subtitle source may reside in different subdirectories under the same directory tree.
+源字幕的样式和时间轴原样保留，不做任何修改。依赖只有 ffmpeg 和 Python 标准库，全程走本地路径（比如 CloudDrive2 挂载的 `L:` 盘），不涉及网络传输。
 
-This workflow is particularly useful for mounted-drive environments — for example, a CloudDrive2 mount exposed as `L:` — because it avoids repeatedly transferring large video files over the network.
+## Trigger Words
 
-## 2. Trigger Keywords
+**English:** subtitle bridge, subtitle mounting, subtitle extraction, subtitle transfer.
 
-**English (primary):** subtitle bridge, subtitle mounting, subtitle extraction, subtitle transfer, subtitle interoperability.
+**中文（字面触发别名）:** 字幕桥接、字幕挂载、字幕提取、字幕搬家、字幕互通.
 
-**Chinese (literal aliases, required for exact-match trigger detection):** 字幕桥接、字幕挂载、字幕提取、字幕搬家、字幕互通.
+## Applicable Scenarios
 
-## 3. Applicable Scenarios
+- 目标视频是 BD、REMUX、RAW 这类没有外挂字幕的高质量片源
+- 本地或挂载盘上有带字幕的流媒体压制（常见标记：`WebRip`、`WEB-DL`、`ABEMA`、`B-Global`）
 
-- The target video is a high-quality release such as BD, REMUX, or RAW that lacks an external subtitle file.
-- A subtitle-bearing streaming release is available locally or on a mounted drive. Common source patterns include `WebRip`, `WEB-DL`, `ABEMA`, `B-Global`.
-
-## 4. Workflow
+## Workflow
 
 ```
-[1] Enter the target video path
-[2] Search for a matching streaming subtitle source locally or on a mounted drive
-[3] Probe subtitle streams with ffprobe
-[4] Select the highest-priority subtitle track
-[5] Extract the track with ffmpeg and convert it to ASS
-[6] Rename the ASS file to <target_video_stem>.ass and copy it beside the target video
-[7] Report the mount result for automatic player loading
+[1] 输入目标视频路径
+[2] 在本地或挂载盘上找匹配的字幕源
+[3] ffprobe 探测字幕轨
+[4] 按优先级选最佳轨
+[5] ffmpeg 提取并转 ASS
+[6] 改名为 <target_video_stem>.ass，复制到目标视频旁边
+[7] 播放器自动加载
 ```
 
-## 5. Subtitle Type Priority
+## 字幕轨优先级
 
-The following literal source tags are matched against the subtitle stream's `tags.title` field. Tags MUST be retained verbatim because they are emitted by fansub groups and consumed by the matcher.
+匹配逻辑：拿下面的标签去对比字幕流的 `tags.title` 字段。这些标签是字幕组打的，必须原样保留，不能改。
 
-| Tier | Literal Source Tags (Preserve) | Interpretation |
+| 等级 | 标签（原样保留） | 含义 |
 |---|---|---|
-| S | `简日双语`, `繁日双语`, `简繁日内封`, `简繁日内封字幕` | Chinese–Japanese bilingual external subtitles |
-| A | `简日内嵌`, `繁日内嵌` | Chinese–Japanese bilingual muxed-in subtitles |
-| B | `简繁内封`, `简繁内封字幕` | Chinese-only external subtitles |
-| C | `简体内嵌`, `繁体内嵌` | Chinese-only muxed-in subtitles |
+| S | `简日双语`, `繁日双语`, `简繁日内封`, `简繁日内封字幕` | 中日双语，外挂轨 |
+| A | `简日内嵌`, `繁日内嵌` | 中日双语，内嵌轨 |
+| B | `简繁内封`, `简繁内封字幕` | 纯中文字幕，外挂轨 |
+| C | `简体内嵌`, `繁体内嵌` | 纯中文字幕，内嵌轨 |
 
-## 6. Subtitle-Group Priority
+完整标签表在代码内部，不对外公开。
 
-The internal priority model for fansub groups is **intentionally not published** in this specification. The ranking would invite community friction between groups and adds no actionable information for users invoking the Skill. The implementation lives in `bangumi_magnet.py`'s `SUBGROUP_PRIORITY` constant and is consulted only when multiple candidate streams tie on type priority.
+## 字幕组优先级
 
-## 7. Naming Rules
+字幕组之间的排名不写在这里——列出来容易引战，而且对实际使用没有帮助。具体实现在 `bangumi_magnet.py` 的 `SUBGROUP_PRIORITY` 里，只在字幕类型优先级相同时才用到。
 
-- The ASS file MUST use the name `<target_video_stem>.ass`.
-- The ASS file MUST be placed in the same directory as the target video.
-- PotPlayer SHOULD load the subtitle automatically through the same-name rule.
+## 命名规则
 
-## 8. API Reference
+输出文件名：`<target_video_stem>.ass`，放在目标视频同目录下，PotPlayer 靠同名规则自动拾取。
 
-### 8.1 `ffprobe_streams(video_path)`
+## API Reference
 
-Probe all stream objects of a video file.
+### `ffprobe_streams(video_path)`
+
+探测视频文件的所有流信息。
 
 ```python
 import subprocess, json
@@ -69,16 +67,14 @@ def ffprobe_streams(video_path: str) -> list:
     return json.loads(result.stdout)['streams']
 ```
 
-### 8.2 `choose_best_subtitle(streams, source_filename)`
+### `choose_best_subtitle(streams, source_filename)`
 
-Return the index of the highest-priority subtitle track.
+返回优先级最高的字幕轨索引。
 
 ```python
 def choose_best_subtitle(streams: list, source_filename: str) -> int:
     """Return the index of the highest-priority subtitle track."""
     subtitles = [s for s in streams if s['codec_type'] == 'subtitle']
-    # Literal source tags MUST be preserved verbatim; they are matched
-    # against the stream's `tags.title` field emitted by fansub groups.
     SUBTITLE_TYPE_PRIORITY = {
         '简日双语': 1,
         '繁日双语': 2,
@@ -97,9 +93,9 @@ def choose_best_subtitle(streams: list, source_filename: str) -> int:
     return subtitles[0]['index'] if subtitles else None
 ```
 
-### 8.3 `extract_subtitle_to_ass(video_path, stream_index, output_ass)`
+### `extract_subtitle_to_ass(video_path, stream_index, output_ass)`
 
-Extract a subtitle track to ASS while preserving source styles.
+提取字幕轨并转为 ASS，保留源样式。
 
 ```python
 def extract_subtitle_to_ass(video_path: str, stream_index: int, output_ass: str):
@@ -118,9 +114,9 @@ def extract_subtitle_to_ass(video_path: str, stream_index: int, output_ass: str)
     return output_ass
 ```
 
-### 8.4 `mount_ass_to_target(target_video, ass_path)`
+### `mount_ass_to_target(target_video, ass_path)`
 
-Copy an ASS file beside the target video using the same-name rule.
+把 ASS 文件复制到目标视频旁边，靠同名规则让播放器自动加载。
 
 ```python
 import shutil
@@ -135,59 +131,39 @@ def mount_ass_to_target(target_video: str, ass_path: str):
     return str(dest)
 ```
 
-## 9. Failure Handling
+## 异常处理
 
-| Scenario | Handling Strategy |
+| 情况 | 怎么办 |
 |---|---|
-| Target video does not exist | Abort because the prerequisite is not satisfied. |
-| Subtitle source does not exist | Ask the user to select another source. |
-| Subtitle source is RAW | Ask the user to select another source because RAW releases generally contain no subtitle track. |
-| Source contains hard subtitles | Ask the user to select another source because OCR is out of scope. |
-| Duration difference exceeds 30 seconds | Emit a warning without blocking the workflow. |
-| Multiple subtitle candidates exist | List the candidates and request a user selection. |
-| `ffprobe` fails | Report the error and skip the current file. |
-| `ffmpeg` conversion fails | Preserve the original file and report the failure reason. |
+| 目标视频不存在 | 直接停，前置条件不满足 |
+| 字幕源不存在 | 让用户换一个源 |
+| 字幕源是 RAW | 让用户换（RAW 一般没字幕） |
+| 字幕源有硬字幕 | 让用户换（OCR 不做） |
+| 时长差 > 30s | 警告一下，不中断流程 |
+| 多个候选字幕轨 | 列出来让用户选 |
+| ffprobe 挂了 | 报错，跳过当前文件 |
+| ffmpeg 转换失败 | 保留原文件，报告失败原因 |
 
-## 10. Known Limitations
+## 依赖
 
-- The source subtitle style is preserved verbatim and is not normalized.
-- Hard-subtitle OCR is not supported.
-- The target video is not re-muxed or transcoded.
-- Subtitle sources are not automatically searched on the public network.
-- External font files referenced by ASS `{\fn...}` tags are not collected automatically; the user must place required fonts beside the target video.
-
-## 11. Dependencies
-
-| Dependency | Version | Purpose |
+| 依赖 | 版本 | 用途 |
 |---|---|---|
-| `ffmpeg` | 7.0.2 or later | Video / subtitle processing |
-| `ffprobe` | 7.0.2 or later | Stream information probe |
-| Python | 3.8+ | Automation script runtime |
-| Python standard library | bundled | `subprocess`, `shutil`, `re`, `json`, `pathlib` |
+| `ffmpeg` | 7.0.2+ | 视频/字幕处理 |
+| `ffprobe` | 7.0.2+ | 流信息探测 |
+| Python | 3.8+ | 脚本运行时 |
+| Python 标准库 | 内置 | `subprocess`, `shutil`, `re`, `json`, `pathlib` |
 
-Path placeholders:
+路径占位符：
+- `<FFMPEG_BIN>` — ffmpeg 可执行文件的绝对路径
+- `<FFPROBE_BIN>` — ffprobe 可执行文件的绝对路径
+- `<BANGUMI_DIR>` — 存放目标视频和字幕源的根目录
 
-- `<FFMPEG_BIN>` — absolute path to the `ffmpeg` executable.
-- `<FFPROBE_BIN>` — absolute path to the `ffprobe` executable.
-- `<BANGUMI_DIR>` — root directory holding target video and subtitle sources.
-
-## 12. Cross-Platform Notes
-
-- **Windows**: use absolute paths in `r'C:\path\to\bin\ffmpeg.exe'` form.
-- **macOS / Linux**: use `/usr/local/bin/ffmpeg` or `which ffmpeg` to locate.
-
-## 13. Project Layout
+## 项目结构
 
 ```
-Anime-subtitle-exchange.SKILL/
-├── SKILL.md                  # Trigger prompt + abstract
-├── README.md                 # This document
+anime-subtitle-exchange/
+├── SKILL.md                  # 触发提示词和概要
+├── README.md                 # 本文件
 └── examples/
-    └── default_workflow.md   # Worked example
+    └── default_workflow.md   # 完整示例
 ```
-
-## 14. References
-
-- Worked example and validation data: `examples/default_workflow.md`
-- Trigger prompt: `SKILL.md`
-- Subtitle type priority implementation: see `SUBTITLE_TYPE_PRIORITY` constant in the source code.
