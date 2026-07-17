@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bd-subtitle-bridge"
+version = "0.1.0"
+description = "Extract and mount subtitles from streaming releases to BD videos"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+
+[project.scripts]
+subtitle-bridge = "scripts.subtitle_bridge:main"
+
+[tool.setuptools.packages.find]
+include = ["scripts*"]

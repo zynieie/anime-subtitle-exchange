@@ -1,114 +1,124 @@
-# BD-Subtitle Bridge · Skill 触发提示
+# Anime-subtitle-exchange.SKILL — Technical Specification
 
-> 版本：v1 · 2026-07-17
-> 状态：企划中（老公反馈已整合，待最终命名）
-
-## 🎯 这个 Skill 做什么
-
-把**带字幕源**（流媒体版，如 LoliHouse 简繁内封）的字幕提取出来，挂到**老公的目标视频**（BD / RAW / 屏幕录像 / 其他原画）上，让 PotPlayer 自动加载中英日字幕。
-
-> 比喻：买了筷子（目标视频），需要一碗饭（字幕）才能吃。本 skill = 把饭盛到筷子旁边。
+> **Language policy.** English is the normative language of this document. Chinese text is retained only when it is a machine-matched subtitle tag, a proper name, a literal trigger alias, or a localized sample.
 >
-> **目标端很灵活**：BD 视频、RAW 视频、屏幕录像、其他任何老公想挂字幕的视频——都行！
+> **语言策略**：英文为主；中文仅用于机器匹配的字幕标签、专名、字面触发别名和本地化样例。
 
-## 🗣️ 触发词（任意一个即激活）
+## 1. Overview
 
-| 类型 | 触发词 |
+### 1.1 Background
+
+High-quality anime releases — such as BD BDRips, REMUXes, and raw disc images — often lack external subtitle tracks. Streaming releases (WebRip / WEB-DL) more commonly include fansub tracks. This Skill bridges the two sources by extracting a subtitle track from the streaming release and attaching it to the target video.
+
+### 1.2 Design Goals
+
+- **Lossless.** Source subtitle styles and timecodes are preserved verbatim.
+- **Compatible.** PotPlayer's same-name loading rule picks up the attached subtitle without manual configuration.
+- **Portable.** Dependencies are limited to `ffmpeg` and the Python standard library.
+- **Low overhead.** The Skill operates entirely on locally mounted paths (e.g. CloudDrive2 mounted to `L:`), avoiding round-trips to remote storage.
+
+### 1.3 Scope
+
+This Skill covers: subtitle-track discovery, track selection by priority model, ASS conversion, and same-name mounting.
+
+This Skill does NOT cover: subtitle translation, subtitle editing, hard-subtitle OCR, or video transcoding.
+
+## 2. Workflow
+
+```
+[1] Target video path
+[2] Locate subtitle source under <BANGUMI_DIR>
+[3] Probe subtitle streams via ffprobe
+[4] Select the highest-priority track
+[5] Extract the track and convert to ASS via ffmpeg
+[6] Rename to <target_video_stem>.ass and copy beside the target video
+[7] Player auto-loads via same-name matching
+```
+
+## 3. Trigger Words
+
+**English (primary):** subtitle bridge, subtitle mounting, subtitle extraction, subtitle transfer.
+
+**Chinese (literal aliases, required for exact-match trigger detection):** 字幕桥接、字幕挂载、字幕提取、字幕搬家、字幕互通.
+
+## 4. Subtitle Type Priority
+
+The following literal source tags are matched against the subtitle stream's `tags.title` field. Tags MUST be retained verbatim because they are emitted by fansub groups and consumed by the matcher.
+
+| Tier | Literal source tags (preserve) | Interpretation |
+|---|---|---|
+| S | `简日双语`, `繁日双语`, `简繁日内封`, `简繁日内封字幕` | Simplified / Traditional Chinese + Japanese (external) |
+| A | `简日内嵌`, `繁日内嵌` | Simplified / Traditional Chinese + Japanese (muxed-in) |
+| B | `简繁内封`, `简繁内封字幕` | Chinese only (external) |
+| C | `简体内嵌`, `繁体内嵌` | Chinese only (muxed-in) |
+
+The full source-tag dictionary is part of the Skill's internal implementation and is intentionally not enumerated in the public specification.
+
+## 5. Subtitle Group Priority
+
+The internal priority model for fansub groups is intentionally **not published** in this specification. The ranking would invite community friction between groups and adds no actionable information for users invoking the Skill. The implementation lives in `bangumi_magnet.py`'s `SUBGROUP_PRIORITY` constant and is consulted only when multiple candidate streams tie on type priority.
+
+## 6. Naming Convention
+
+- Output ASS file: `<target_video_stem>.ass`
+- Location: same directory as the target video
+- Player compatibility: PotPlayer loads via same-name matching
+
+## 7. Failure Semantics
+
+| Scenario | Strategy |
 |---|---|
-| 提取 | "提取字幕"、"提字幕"、"字幕提取" |
-| 挂载 | "挂字幕"、"加字幕"、"字幕挂载" |
-| 桥接 | "字幕桥接"、"字幕搬家"、"字幕互通"、"字幕桥" |
-| 目标 | "给 BD 配字幕"、"给 RAW 挂字幕"、"给录屏加字幕" |
-| 实操 | "视频没字幕怎么办"、"目标视频要字幕" |
+| Target video missing | Halt (precondition not met) |
+| Subtitle source missing | Prompt user to switch source |
+| Subtitle source is RAW | Prompt user to switch source (no subtitle track) |
+| Subtitle source has hardcoded subtitles | Prompt user to switch source (OCR out of scope) |
+| Duration mismatch > 30s | Emit warning, do not abort |
+| Multiple candidates | List candidates and request user selection |
+| `ffprobe` invocation failure | Emit error and skip current file |
+| `ffmpeg` conversion failure | Preserve source file and report failure cause |
 
-## 👤 谁用这个 Skill
+## 8. Limitations
 
-**老公**：
-- 已有目标视频（`L:\番剧\` 下，BD / RAW / 屏幕录像 / 其他原画都行）
-- 有带字幕的流媒体版（可能 L 盘，也可能需要提示换源）
-- 想给目标视频加中英日字幕
-- 有流媒体版（可能 L 盘，也可能需要提示换源）
-- 想优雅看 BD + 中英日字幕
+This Skill does NOT perform:
 
-## 💾 网盘挂载场景（最佳实践）
+- Video download
+- Subtitle-style modification (source `Style` blocks and timecodes are preserved)
+- Hardcoded-subtitle OCR
+- Target video re-muxing or transcoding
+- Web crawling for subtitle sources
+- Auto-collection of external fonts referenced by ASS `{\fn...}` tags
 
-老公的核心使用场景：**网盘挂载到本地盘符时调用**（如 CloudDrive2 挂载到 L 盘）。
+## 9. Dependencies
 
-**为什么这是最佳场景**：
-- ✅ agent 直接读 L 盘上的 BD / 流媒体文件
-- ✅ ffmpeg 本地处理，**无网络传输**（不用下载到本地再上传）
-- ✅ 输出 ASS 文件直接落到 L 盘 BD 同目录
-- ✅ PotPlayer 直接从 L 盘读取，无需额外缓存
+| Dependency | Version | Purpose |
+|---|---|---|
+| `ffmpeg` | 7.0.2 or later | Video / subtitle processing |
+| `ffprobe` | 7.0.2 or later | Stream information probe |
+| Python | 3.8+ | Automation script runtime |
+| Python standard library | bundled | `subprocess`, `shutil`, `re`, `json`, `pathlib` |
 
-**典型场景**：
-```
-老公: 把 Aparida BD 挂上字幕
-AI:   1. ffprobe 读 L:\番剧\[DBD-Raws]...  ← 本地读
-      2. ffmpeg 提取 L:\番剧\[LoliHouse]... 字幕  ← 本地处理
-      3. cp ASS 到 L:\番剧\[DBD-Raws]... 同目录  ← 本地写
-      4. 老公 PotPlayer 打开 BD 即可  ← 本地读
-```
+Path placeholders used throughout this specification:
 
-**反例（不推荐）**：网盘**没有挂载到本地盘符**时，agent 调用 ffmpeg 要先下载视频到本地 → 处理 → 上传回去 → 网络传输大、慢、易超时。
+- `<FFMPEG_BIN>` — absolute path to the `ffmpeg` executable
+- `<FFPROBE_BIN>` — absolute path to the `ffprobe` executable
+- `<BANGUMI_DIR>` — root directory holding target video and subtitle sources
 
-**老公的 L 盘就是 CloudDrive2 等网盘挂载的结果**——这是 skill 存在的关键前提。
+## 10. Cross-Platform Notes
 
-## 🚦 Skill 流程速览（7 步）
+- **Windows**: use absolute paths in `r'C:\path\to\bin\ffmpeg.exe'` form
+- **macOS / Linux**: use `/usr/local/bin/ffmpeg` or `which ffmpeg` to locate
 
-```
-[1] AI 问老公：看 BD 还是流媒体？（默认 BD）
-[2] 老公提供 BD 路径 → AI 用 ffprobe 解析 BD 信息
-[3] AI 引导到字幕源（老公 L 盘上已有的流媒体版）
-[4] AI 用 ffmpeg 提取字幕（中日优先）
-[5] 导出 ASS（保留字幕源原样样式）
-[6] 重命名为 <BD主文件名>.ass，挂到 BD 同目录
-[7] 报告老公：✅ BD + 中日字幕已就绪
-```
-
-## ❌ 这个 Skill 不做什么
-
-- ❌ 不下载 BD（老公已下载好）
-- ❌ 不修改字幕样式（保留字幕源原样）
-- ❌ 不自动找字幕源（老公提供或提示换源）
-- ❌ 不做硬字幕 OCR（先不做）
-- ❌ 不修改 BD 视频本身（不重封装）
-
-## ⚠️ 失败场景
-
-| 场景 | 处理 |
-|---|---|
-| BD 完全缺失 | 不是本 skill 受众（"买了筷子无饭可吃"） |
-| 流媒体版缺失 | 提示老公换源（蜜柑/nyaa） |
-| 流媒体是 RAW | 提示换源（RAW 看不清内容） |
-| 流媒体是硬字幕 | 提示换源（OCR 暂不支持） |
-| 时长差异过大 | 警告，不阻断 |
-
-## 📂 项目结构
+## 11. Project Structure
 
 ```
-D:\project\Skills\追番skills\skill 企划\bd-subtitle-bridge\
-├── SKILL.md       ← 本文件（触发提示）
-├── README.md      ← 详细流程 + 可执行代码
-├── examples/
-│   └── aparida_demo.md   ← 实战案例（Aparida BD）
-└── _讨论/
-    ├── 04_老公原话记录.md  ← 原始需求
-    ├── 05_爱芮拆解分析.md  ← 需求拆解
-    └── ...
+Anime-subtitle-exchange.SKILL/
+├── SKILL.md                  # Trigger prompt + abstract (this file)
+├── README.md                 # Technical documentation
+└── examples/
+    └── default_workflow.md   # Worked example
 ```
 
-## 🔗 相关 skill（复用）
+## 12. See Also
 
-- `D:\project\Skills\追番skills\提取字幕字幕分析\SKILL.md` — **字幕提取核心工具**
-- `D:\project\Skills\追番skills\mikan\bangumi_magnet.py` — 字幕类型/字幕组优先级字典
-
-## 🚀 快速开始
-
-老公说 "把 Aparida BD 挂上字幕"：
-1. AI 询问确认 BD 路径（老公给）
-2. AI 自动查 L 盘找对应流媒体版
-3. AI 提取中日字幕 → ASS
-4. AI 挂到 BD 同目录
-5. ✅ 完成
-
-详见 `README.md`。
+- Full technical documentation: `README.md`
+- Worked example: `examples/default_workflow.md`
