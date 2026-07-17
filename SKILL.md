@@ -1,124 +1,87 @@
-# Anime-subtitle-exchange.SKILL — Technical Specification
+# anime-subtitle-exchange
 
-> **Language policy.** English is the normative language of this document. Chinese text is retained only when it is a machine-matched subtitle tag, a proper name, a literal trigger alias, or a localized sample.
->
-> **语言策略**：英文为主；中文仅用于机器匹配的字幕标签、专名、字面触发别名和本地化样例。
+## Overview
 
-## 1. Overview
+BD、REMUX 这类高质量片源经常不带外挂字幕，而 WebRip / WEB-DL 之类的流媒体压制通常有字幕组的内封或内嵌轨。这个 Skill 做的事就是：从流媒体片源里把字幕轨抠出来，贴到目标视频旁边，PotPlayer 通过同名规则自动加载。
 
-### 1.1 Background
+源字幕的样式和时间轴原样保留，不做任何修改。依赖只有 ffmpeg 和 Python 标准库，全程走本地路径（比如 CloudDrive2 挂载的 `L:` 盘），不涉及网络传输。
 
-High-quality anime releases — such as BD BDRips, REMUXes, and raw disc images — often lack external subtitle tracks. Streaming releases (WebRip / WEB-DL) more commonly include fansub tracks. This Skill bridges the two sources by extracting a subtitle track from the streaming release and attaching it to the target video.
+## Trigger Words
 
-### 1.2 Design Goals
+**English:** subtitle bridge, subtitle mounting, subtitle extraction, subtitle transfer.
 
-- **Lossless.** Source subtitle styles and timecodes are preserved verbatim.
-- **Compatible.** PotPlayer's same-name loading rule picks up the attached subtitle without manual configuration.
-- **Portable.** Dependencies are limited to `ffmpeg` and the Python standard library.
-- **Low overhead.** The Skill operates entirely on locally mounted paths (e.g. CloudDrive2 mounted to `L:`), avoiding round-trips to remote storage.
+**中文（字面触发别名）:** 字幕桥接、字幕挂载、字幕提取、字幕搬家、字幕互通.
 
-### 1.3 Scope
-
-This Skill covers: subtitle-track discovery, track selection by priority model, ASS conversion, and same-name mounting.
-
-This Skill does NOT cover: subtitle translation, subtitle editing, hard-subtitle OCR, or video transcoding.
-
-## 2. Workflow
+## Workflow
 
 ```
-[1] Target video path
-[2] Locate subtitle source under <BANGUMI_DIR>
-[3] Probe subtitle streams via ffprobe
-[4] Select the highest-priority track
-[5] Extract the track and convert to ASS via ffmpeg
-[6] Rename to <target_video_stem>.ass and copy beside the target video
-[7] Player auto-loads via same-name matching
+[1] 输入目标视频路径
+[2] 在 <BANGUMI_DIR> 下找匹配的字幕源
+[3] ffprobe 探测字幕轨
+[4] 按优先级选最佳轨
+[5] ffmpeg 提取并转 ASS
+[6] 改名为 <target_video_stem>.ass，复制到目标视频旁边
+[7] 播放器自动加载
 ```
 
-## 3. Trigger Words
+## 字幕轨优先级
 
-**English (primary):** subtitle bridge, subtitle mounting, subtitle extraction, subtitle transfer.
+匹配逻辑：拿下面的标签去对比字幕流的 `tags.title` 字段。这些标签是字幕组打的，必须原样保留，不能改。
 
-**Chinese (literal aliases, required for exact-match trigger detection):** 字幕桥接、字幕挂载、字幕提取、字幕搬家、字幕互通.
-
-## 4. Subtitle Type Priority
-
-The following literal source tags are matched against the subtitle stream's `tags.title` field. Tags MUST be retained verbatim because they are emitted by fansub groups and consumed by the matcher.
-
-| Tier | Literal source tags (preserve) | Interpretation |
+| 等级 | 标签（原样保留） | 含义 |
 |---|---|---|
-| S | `简日双语`, `繁日双语`, `简繁日内封`, `简繁日内封字幕` | Simplified / Traditional Chinese + Japanese (external) |
-| A | `简日内嵌`, `繁日内嵌` | Simplified / Traditional Chinese + Japanese (muxed-in) |
-| B | `简繁内封`, `简繁内封字幕` | Chinese only (external) |
-| C | `简体内嵌`, `繁体内嵌` | Chinese only (muxed-in) |
+| S | `简日双语`, `繁日双语`, `简繁日内封`, `简繁日内封字幕` | 中日双语，外挂轨 |
+| A | `简日内嵌`, `繁日内嵌` | 中日双语，内嵌轨 |
+| B | `简繁内封`, `简繁内封字幕` | 纯中文字幕，外挂轨 |
+| C | `简体内嵌`, `繁体内嵌` | 纯中文字幕，内嵌轨 |
 
-The full source-tag dictionary is part of the Skill's internal implementation and is intentionally not enumerated in the public specification.
+完整标签表在代码内部，不对外公开。
 
-## 5. Subtitle Group Priority
+## 字幕组优先级
 
-The internal priority model for fansub groups is intentionally **not published** in this specification. The ranking would invite community friction between groups and adds no actionable information for users invoking the Skill. The implementation lives in `bangumi_magnet.py`'s `SUBGROUP_PRIORITY` constant and is consulted only when multiple candidate streams tie on type priority.
+字幕组之间的排名不写在这里——列出来容易引战，而且对实际使用没有帮助。具体实现在 `bangumi_magnet.py` 的 `SUBGROUP_PRIORITY` 里，只在字幕类型优先级相同时才用到。
 
-## 6. Naming Convention
+## 命名规则
 
-- Output ASS file: `<target_video_stem>.ass`
-- Location: same directory as the target video
-- Player compatibility: PotPlayer loads via same-name matching
+输出文件名：`<target_video_stem>.ass`，放在目标视频同目录下，PotPlayer 靠同名规则自动拾取。
 
-## 7. Failure Semantics
+## 异常处理
 
-| Scenario | Strategy |
+| 情况 | 怎么办 |
 |---|---|
-| Target video missing | Halt (precondition not met) |
-| Subtitle source missing | Prompt user to switch source |
-| Subtitle source is RAW | Prompt user to switch source (no subtitle track) |
-| Subtitle source has hardcoded subtitles | Prompt user to switch source (OCR out of scope) |
-| Duration mismatch > 30s | Emit warning, do not abort |
-| Multiple candidates | List candidates and request user selection |
-| `ffprobe` invocation failure | Emit error and skip current file |
-| `ffmpeg` conversion failure | Preserve source file and report failure cause |
+| 目标视频不存在 | 直接停，前置条件不满足 |
+| 字幕源不存在 | 让用户换一个源 |
+| 字幕源是 RAW | 让用户换（RAW 一般没字幕） |
+| 字幕源有硬字幕 | 让用户换（OCR 不做） |
+| 时长差 > 30s | 警告一下，不中断流程 |
+| 多个候选字幕轨 | 列出来让用户选 |
+| ffprobe 挂了 | 报错，跳过当前文件 |
+| ffmpeg 转换失败 | 保留原文件，报告失败原因 |
 
-## 8. Limitations
+## Limitations
 
-This Skill does NOT perform:
+不改字幕样式（源文件的 Style 块和时间轴原样保留），不做硬字幕 OCR，不转码视频，不自动搜索网络字幕源，不自动收集 ASS `{\fn...}` 引用的外挂字体。
 
-- Video download
-- Subtitle-style modification (source `Style` blocks and timecodes are preserved)
-- Hardcoded-subtitle OCR
-- Target video re-muxing or transcoding
-- Web crawling for subtitle sources
-- Auto-collection of external fonts referenced by ASS `{\fn...}` tags
+## 依赖
 
-## 9. Dependencies
-
-| Dependency | Version | Purpose |
+| 依赖 | 版本 | 用途 |
 |---|---|---|
-| `ffmpeg` | 7.0.2 or later | Video / subtitle processing |
-| `ffprobe` | 7.0.2 or later | Stream information probe |
-| Python | 3.8+ | Automation script runtime |
-| Python standard library | bundled | `subprocess`, `shutil`, `re`, `json`, `pathlib` |
+| `ffmpeg` | 7.0.2+ | 视频/字幕处理 |
+| `ffprobe` | 7.0.2+ | 流信息探测 |
+| Python | 3.8+ | 脚本运行时 |
+| Python 标准库 | 内置 | `subprocess`, `shutil`, `re`, `json`, `pathlib` |
 
-Path placeholders used throughout this specification:
+路径占位符：
+- `<FFMPEG_BIN>` — ffmpeg 可执行文件的绝对路径
+- `<FFPROBE_BIN>` — ffprobe 可执行文件的绝对路径
+- `<BANGUMI_DIR>` — 存放目标视频和字幕源的根目录
 
-- `<FFMPEG_BIN>` — absolute path to the `ffmpeg` executable
-- `<FFPROBE_BIN>` — absolute path to the `ffprobe` executable
-- `<BANGUMI_DIR>` — root directory holding target video and subtitle sources
-
-## 10. Cross-Platform Notes
-
-- **Windows**: use absolute paths in `r'C:\path\to\bin\ffmpeg.exe'` form
-- **macOS / Linux**: use `/usr/local/bin/ffmpeg` or `which ffmpeg` to locate
-
-## 11. Project Structure
+## 项目结构
 
 ```
-Anime-subtitle-exchange.SKILL/
-├── SKILL.md                  # Trigger prompt + abstract (this file)
-├── README.md                 # Technical documentation
+anime-subtitle-exchange/
+├── SKILL.md                  # 本文件
+├── README.md                 # API 参考和详细文档
 └── examples/
-    └── default_workflow.md   # Worked example
+    └── default_workflow.md   # 完整示例
 ```
-
-## 12. See Also
-
-- Full technical documentation: `README.md`
-- Worked example: `examples/default_workflow.md`
